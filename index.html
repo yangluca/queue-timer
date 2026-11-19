@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f4f4f1">
+<title>排隊計時器</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;background:#f4f4f1;color:#1d1d1b;display:flex;flex-direction:column;padding:12px;gap:10px;touch-action:manipulation}
+  .top{display:flex;justify-content:space-between;align-items:baseline}
+  .clock{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+  .stat{font-size:14px;color:#555;text-align:right;line-height:1.4}
+  .big{flex:1;min-height:120px;border:0;border-radius:20px;color:#fff;font-size:30px;font-weight:700;line-height:1.3;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+  .big small{font-size:15px;font-weight:400;opacity:.9}
+  .big:active{transform:scale(.98);filter:brightness(.9)}
+  #a{background:#1f6feb}
+  #c{background:#1a8f4c}
+  .row{display:flex;gap:8px}
+  .sm{flex:1;padding:12px 6px;border-radius:12px;border:1px solid #c9c9c3;background:#fff;font-size:15px;color:#1d1d1b;cursor:pointer}
+  .sm:active{background:#eee}
+  #log{background:#fff;border-radius:12px;padding:8px 10px;font-size:13px;max-height:120px;overflow:auto;font-variant-numeric:tabular-nums;line-height:1.5}
+  #msg{font-size:13px;color:#1a8f4c;min-height:18px}
+  .warn{color:#b3261e}
+  details{background:#fff;border-radius:12px;padding:8px 12px;font-size:14px;line-height:1.6}
+  summary{cursor:pointer;font-weight:600}
+  details ol{margin:6px 0 4px;padding-left:20px}
+  .note{font-size:12px;color:#777}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="stat" id="stat">到達 0 ・ 結帳完 0<br>目前排隊 0 人</div>
+  </div>
+
+  <button class="big" id="a">有人來了<small>顧客走進隊伍 / 走到櫃檯（A）</small></button>
+  <button class="big" id="c">結帳完成<small>付完款、店員結束這位的服務（C）</small></button>
+
+  <div class="row">
+    <button class="sm" id="balk">看到人多就走掉 <b id="balkN">0</b></button>
+    <button class="sm" id="undo">復原上一下</button>
+  </div>
+  <div class="row">
+    <button class="sm" id="copy">複製資料（貼到 Excel）</button>
+    <button class="sm" id="share">傳給自己（LINE 等）</button>
+  </div>
+  <div class="row">
+    <button class="sm" id="csv">下載 CSV 檔</button>
+    <button class="sm" id="reset">全部清除</button>
+  </div>
+  <div id="msg"></div>
+  <div id="log"></div>
+
+  <details id="help">
+    <summary>怎麼用（第一次請先看）</summary>
+    <ol>
+      <li>到現場後，有顧客<b>加入隊伍</b>就按藍色「有人來了」。</li>
+      <li>有顧客<b>結帳完成離開櫃檯</b>就按綠色「結帳完成」。</li>
+      <li>看到人多直接走掉、沒排隊的人，按「看到人多就走掉」。</li>
+      <li>按錯就按「復原上一下」，會刪掉最後一筆。</li>
+      <li>觀察完按「傳給自己」用 LINE 傳到電腦，或按「複製資料」，再貼到 Excel。資料是三欄：編號、到達時間、結束時間（第 n 個到達配第 n 個結帳完，也就是先到先服務）。</li>
+    </ol>
+    <div class="note">資料只存在這支手機的這個瀏覽器裡，不會上傳。關掉分頁再打開資料還在，但換手機、換瀏覽器或清除瀏覽紀錄就沒了，記完請馬上傳出備份。iPhone 請用 Safari 打開；不要用 LINE 內建瀏覽器記錄，它可能不保留資料。</div>
+  </details>
+
+<script>
+(function(){
+  var KEY="queue_timer_standalone_v1";
+  var S={ev:[],balk:0,t0:null};
+  try{var raw=localStorage.getItem(KEY);if(raw)S=JSON.parse(raw);}catch(e){}
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){say("無法存檔，請記完立刻傳出資料");}}
+  function p(n){return n<10?"0"+n:""+n}
+  function fmt(ms){var d=new Date(ms);return p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());}
+  function $(id){return document.getElementById(id)}
+  function counts(){var a=0,c=0;S.ev.forEach(function(e){if(e.k==="A")a++;else c++;});return{a:a,c:c};}
+  function render(){
+    var n=counts();
+    $("stat").innerHTML="到達 "+n.a+" ・ 結帳完 "+n.c+"<br>目前排隊 "+Math.max(n.a-n.c,0)+" 人"+(n.c>n.a?' <span class="warn">（C 比 A 多，請檢查）</span>':"");
+    $("balkN").textContent=S.balk;
+    $("log").innerHTML=S.ev.slice().reverse().slice(0,30).map(function(e){return (e.k==="A"?"▶ 到達 ":"■ 結帳完 ")+fmt(e.t);}).join("<br>")||"還沒有紀錄";
+  }
+  function say(t){$("msg").textContent=t;clearTimeout(say.h);say.h=setTimeout(function(){$("msg").textContent="";},3000);}
+  function buzz(){try{navigator.vibrate&&navigator.vibrate(40);}catch(e){}}
+  function add(k){var t=Date.now();if(!S.t0)S.t0=t;S.ev.push({k:k,t:t});save();buzz();render();say((k==="A"?"已記到達 ":"已記結帳完 ")+fmt(t));}
+  $("a").onclick=function(){add("A")};
+  $("c").onclick=function(){add("C")};
+  $("balk").onclick=function(){S.balk++;save();buzz();render();};
+  $("undo").onclick=function(){var e=S.ev.pop();if(!e&&S.balk>0)S.balk--;save();render();say(e?"已復原 "+(e.k==="A"?"到達":"結帳完"):"沒有可復原的");};
+  var armed=false;
+  $("reset").onclick=function(){
+    if(!armed){armed=true;$("reset").textContent="再按一次確認清除";setTimeout(function(){armed=false;$("reset").textContent="全部清除";},3000);return;}
+    S={ev:[],balk:0,t0:null};save();armed=false;$("reset").textContent="全部清除";render();say("已清除");
+  };
+  function rowsOf(){
+    var A=[],C=[];S.ev.forEach(function(e){(e.k==="A"?A:C).push(e.t);});
+    var rows=[["編號","A 到達時間","C 結束時間"]];
+    for(var i=0;i<A.length;i++){rows.push([i+1,fmt(A[i]),C[i]!=null?fmt(C[i]):""]);}
+    return rows;
+  }
+  function build(){return rowsOf().map(function(r){return r.join("\t");}).join("\n")+"\n\n看到人多就走掉\t"+S.balk;}
+  function showText(t){$("log").innerHTML='<b>請手動全選下面文字複製：</b><textarea readonly style="width:100%;height:100px">'+t.replace(/</g,"&lt;")+'</textarea>';}
+  $("copy").onclick=function(){
+    var txt=build();
+    function fallback(){var ta=document.createElement("textarea");ta.value=txt;ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();var ok=false;try{ok=document.execCommand("copy");}catch(e){}document.body.removeChild(ta);return ok;}
+    function done(ok){if(ok){say("已複製，到 Excel 選一格貼上（走掉人數在最下面）");}else{showText(txt);}}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(function(){done(true)},function(){done(fallback())});}
+    else done(fallback());
+  };
+  $("share").onclick=function(){
+    var txt=build();
+    if(navigator.share){navigator.share({title:"排隊紀錄",text:txt}).catch(function(){});}
+    else{showText(txt);say("這個瀏覽器不支援分享，請手動複製");}
+  };
+  $("csv").onclick=function(){
+    var rows=rowsOf();rows.push([]);rows.push(["看到人多就走掉",S.balk]);
+    var csv="﻿"+rows.map(function(r){return r.join(",");}).join("\r\n");
+    var d=new Date(S.t0||Date.now());
+    var name="排隊紀錄_"+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes())+".csv";
+    var url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+    var a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},1000);
+    say("已下載 "+name);
+  };
+  if(!S.ev.length&&!S.balk){$("help").open=true;}
+  setInterval(function(){$("clock").textContent=fmt(Date.now());},500);
+  render();
+})();
+</script>
+</body>
+</html>
